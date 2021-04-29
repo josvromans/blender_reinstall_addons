@@ -7,6 +7,8 @@ bl_info = {
     "description": "Reinstall custom add-ons after code changes",
 }
 import shutil
+import sys
+from importlib import reload
 from pathlib import Path
 
 import bpy
@@ -14,7 +16,6 @@ import addon_utils
 
 
 class MyAddons_OT_add(bpy.types.Operator):
-    """"""
     bl_idname = "my_addons.add"
     bl_label = "Add the path to a personal add-on"
     bl_options = {'REGISTER'}
@@ -37,7 +38,6 @@ class MyAddons_OT_remove(bpy.types.Operator):
 
 
 class MyAddons_OT_reinstall(bpy.types.Operator):
-    """"""
     bl_idname = "my_addons.reinstall"
     bl_label = "Reinstall the selected add on"
     bl_options = {'REGISTER'}
@@ -89,23 +89,27 @@ class MyAddons_OT_reinstall(bpy.types.Operator):
 
                 bpy.ops.preferences.addon_remove(module=addon_name)
 
+            # make a zipfile, install the addon in Blender and unlink the zipfile
             zipfile_path = Path(shutil.make_archive(str(directory_path), 'zip', str(directory_path.parent), addon_name))
             bpy.ops.preferences.addon_install(filepath=str(zipfile_path), overwrite=True)
             zipfile_path.unlink()
 
-            from importlib import reload
-            from sys import modules
-            modules[__name__] = reload(modules[__name__])
-            for name, module in modules.items():
+            sys.modules[__name__] = reload(sys.modules[__name__])
+            for name, module in sys.modules.items():
                 if name.startswith(f"{addon_name}."):
-                    # when this fails, there was probably an error in the register method. After resolving that problem,
-                    # there will be a Value error on addon_enable.
-                    # I choose not to catch and handle this, but restart Blender in that case
                     globals()[name] = reload(module)
 
-            del reload, modules
+            try:
+                bpy.ops.preferences.addon_enable(module=addon_name)
+            except Exception as e:
+                # An exception happened in addon_enable, before raising the exception, make sure the modules that
+                # were loaded are deleted. Otherwise they will cause errors for the next install
+                print('Exception in addon_enable, delete the following modules that were loaded already:')
+                for name in [name for name, module in sys.modules.items() if name.startswith(f"{addon_name}.")]:
+                    print(f'del sys.modules[{name}]')
+                    del sys.modules[name]
 
-            bpy.ops.preferences.addon_enable(module=addon_name)
+                raise e
 
             # These methods are useful for related add on reloading,
             # but I believe they are not needed when reinstalling the addon with a zipfile
@@ -189,11 +193,23 @@ blender_classes = [
 ]
 
 
+addon_keymaps = []
+
+
 def register():
     for blender_class in blender_classes:
         bpy.utils.register_class(blender_class)
 
+    wm = bpy.context.window_manager
+    km = wm.keyconfigs.addon.keymaps.new(name='Window', space_type='EMPTY')
+    kmi = km.keymap_items.new('my_addons.reinstall', 'R', 'PRESS', shift=True, ctrl=True)
+    addon_keymaps.append((km, kmi))
+
 
 def unregister():
-    for blender_class in blender_classes[::-1]:
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
+
+    for blender_class in blender_classes:
         bpy.utils.unregister_class(blender_class)
