@@ -95,7 +95,7 @@ class MyAddons_OT_reinstall(bpy.types.Operator):
             zipfile_path.unlink()
 
             sys.modules[__name__] = reload(sys.modules[__name__])
-            for name, module in sys.modules.items():
+            for name, module in list(sys.modules.items()):
                 if name.startswith(f"{addon_name}."):
                     globals()[name] = reload(module)
 
